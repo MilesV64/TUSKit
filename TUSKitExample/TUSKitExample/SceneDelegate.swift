@@ -67,6 +67,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         
         // We can already trigger background tasks. Once the background-scheduler runs, the tasks will upload.
-        tusClient.scheduleBackgroundTasks()
+        //tusClient.scheduleBackgroundTasks()
     }
 }
