@@ -21,7 +21,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         
         do {
-            tusClient = try TUSClient(server: URL(string: "https://tusd.tusdemo.net/files")!, sessionIdentifier: "TUS DEMO", storageDirectory: URL(string: "/TUS")!, chunkSize: 100 * 1024 * 1024)
+            tusClient = try TUSClient(server: URL(string: "https://tusd.tusdemo.net/files")!, sessionIdentifier: "TUS DEMO",
+                                      sessionConfiguration: .background(withIdentifier: "com.TUSKit.sample"),
+                                      storageDirectory: URL(string: "/TUS")!, chunkSize: 100000 * 1024 * 1024)
+
             wrapper = TUSWrapper(client: tusClient)
             let remainingUploads = tusClient.start()
             switch remainingUploads.count {

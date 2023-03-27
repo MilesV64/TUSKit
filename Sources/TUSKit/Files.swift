@@ -151,7 +151,12 @@ final class Files {
             }
             
             let targetLocation = storageDirectory.appendingPathComponent(fileName)
-            try data.write(to: targetLocation, options: .atomic)
+            print(targetLocation)
+//            if FileManager.default.fileExists(atPath: targetLocation.path) {
+//                try FileManager.default.removeItem(at: targetLocation)
+//            }
+            
+            try! data.write(to: targetLocation, options: .atomic)
             return targetLocation
         }
     }

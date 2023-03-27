@@ -126,7 +126,7 @@ final class Scheduler {
             }
             
         }
-    }
+    }    
     
     /// Get first available task, removes it from current tasks
     /// - Returns: First next task, or nil if tasks are empty

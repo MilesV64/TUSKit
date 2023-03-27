@@ -77,8 +77,10 @@ final class UploadDataTask: NSObject, IdentifiableTask {
         }
         
         let dataToUpload: Data
+        let file: URL
         do {
             dataToUpload = try loadData()
+            file = try prepareUploadFile()
         } catch let error {
             let tusError = TUSClientError.couldNotLoadData(underlyingError: error)
             completed(Result.failure(tusError))
@@ -90,7 +92,7 @@ final class UploadDataTask: NSObject, IdentifiableTask {
             return
         }
         
-        let task = api.upload(data: dataToUpload, range: range, location: remoteDestination, metaData: self.metaData) { [weak self] result in
+        let task = api.upload(fromFile: file, offset: range?.lowerBound ?? 0, location: remoteDestination, metaData: self.metaData) { [weak self] result in
             self?.observation?.invalidate()
 
             self?.queue.async {
@@ -146,6 +148,9 @@ final class UploadDataTask: NSObject, IdentifiableTask {
             }
         }
         
+        task.taskDescription = "\(metaData.id)"
+        task.resume()
+        
         sessionTask = task
         
         if #available(iOS 11.0, macOS 10.13, *) {
@@ -155,7 +160,7 @@ final class UploadDataTask: NSObject, IdentifiableTask {
     
     @available(iOS 11.0, macOS 10.13, *)
     func observeTask(task: URLSessionUploadTask, size: Int) {
-        let targetRange = self.range ?? 0..<size
+        let targetRange = 0..<size
         let uploaded = metaData.uploadedRange?.count ?? 0
         
         observation = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
@@ -168,6 +173,33 @@ final class UploadDataTask: NSObject, IdentifiableTask {
                 self.progressDelegate?.progressUpdatedFor(metaData: self.metaData, totalUploadedBytes: totalUploaded)
             }
         }
+    }
+    
+    func prepareUploadFile() throws -> URL {
+        let fileHandle = try FileHandle(forReadingFrom: metaData.filePath)
+        
+        defer {
+            fileHandle.closeFile()
+        }
+        
+        // Can't use switch with #available :'(
+        let data: Data
+        if let range = self.range, #available(iOS 13.0, macOS 10.15, *) { // Has range, for newer versions
+            try fileHandle.seek(toOffset: UInt64(range.startIndex))
+            data = fileHandle.readData(ofLength: range.count)
+        } else if let range = self.range { // Has range, for older versions
+            fileHandle.seek(toFileOffset: UInt64(range.startIndex))
+            data = fileHandle.readData(ofLength: range.count)
+            /*
+             } else if #available(iOS 13.4, macOS 10.15, *) { // No range, newer versions.
+             Note that compiler and api says that readToEnd is available on macOS 10.15.4 and higher, but yet github actions of 10.15.7 fails to find the member.
+             return try fileHandle.readToEnd()
+             */
+        } else { // No range, older versions
+            data = fileHandle.readDataToEndOfFile()
+        }
+        
+        return try files.store(data: data, id: metaData.id, preferredFileExtension: "uploadData")
     }
     
     /// Load data based on range (if there). Uses FileHandle to be able to handle large files
@@ -198,6 +230,7 @@ final class UploadDataTask: NSObject, IdentifiableTask {
     }
     
     func cancel() {
+        print("DW: cancelling task \(sessionTask?.taskDescription ?? "NO TASK!!")")
         isCanceled = true
         observation?.invalidate()
         sessionTask?.cancel()
@@ -207,4 +240,3 @@ final class UploadDataTask: NSObject, IdentifiableTask {
         observation?.invalidate()
     }
 }
-

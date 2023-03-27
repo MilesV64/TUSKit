@@ -69,7 +69,7 @@ public final class TUSClient {
     private let files: Files
     private var didStopAndCancel = false
     private let serverURL: URL
-    private let scheduler = Scheduler()
+    private let scheduler: Scheduler
     private let api: TUSAPI
     private let chunkSize: Int
     /// Keep track of uploads and their id's
@@ -90,10 +90,43 @@ public final class TUSClient {
     }
 #endif
     
+    /// Initialize a TUSClient with support for background URLSessions and uploads
+    /// - Parameters:
+    ///   - server: The URL of the server where you want to upload to.
+    ///   - sessionIdentifier: An identifier to know which TUSClient calls delegate methods.
+    ///   - sessionConfiguration: The URLSession configuration to use for TUSClient. We recommend passing URLSessionConfiguration.background so the SDK can support background uploads.
+    ///   - storageDirectory: A directory to store local files for uploading and continuing uploads. Leave nil to use the documents dir. Pass a relative path (e.g. "TUS" or "/TUS" or "/Uploads/TUS") for a relative directory inside the documents directory.
+    ///   You can also pass an absolute path, e.g. "file://uploads/TUS"
+    ///   - chunkSize: The amount of bytes the data to upload will be chunked by. Defaults to 512 kB.
+    ///   - supportedExtensions: The TUS protocol extensions that the client should use. For now, the available supported extensions are `.creation`. Defaults to `[.creation]`.
+    ///
+    /// - Important: The client assumes by default that your server implements the Creation TUS protocol extension. If your server does not support that,
+    ///   make sure that you provide an empty array in the `supportExtensions` parameter.
+    /// - Throws: File related errors when it can't make a directory at the designated path.
+    public init(server: URL, sessionIdentifier: String, sessionConfiguration: URLSessionConfiguration,
+                storageDirectory: URL? = nil, chunkSize: Int = 500 * 1024,
+                supportedExtensions: [TUSProtocolExtension] = [.creation]) throws {
+        
+        if sessionConfiguration.sessionSendsLaunchEvents == false {
+            print("TUSClient warning: initializing with a session configuration that's not suited for background uploads.")
+        }
+        
+        let scheduler = Scheduler()
+        self.sessionIdentifier = sessionIdentifier
+        self.api = TUSAPI(sessionConfiguration: sessionConfiguration)
+        self.files = try Files(storageDirectory: storageDirectory)
+        self.serverURL = server
+        self.chunkSize = chunkSize
+        self.supportedExtensions = supportedExtensions
+        self.scheduler = scheduler
+        scheduler.delegate = self
+        removeFinishedUploads()
+    }
+    
     /// Initialize a TUSClient
     /// - Parameters:
     ///   - server: The URL of the server where you want to upload to.
-    ///   - sessionIdentifier: An identifier to know which TUSClient calls delegate methods, also used for URLSession configurations.
+    ///   - sessionIdentifier: An identifier to know which TUSClient calls delegate methods.
     ///   - storageDirectory: A directory to store local files for uploading and continuing uploads. Leave nil to use the documents dir. Pass a relative path (e.g. "TUS" or "/TUS" or "/Uploads/TUS") for a relative directory inside the documents directory.
     ///   You can also pass an absolute path, e.g. "file://uploads/TUS"
     ///   - session: A URLSession you'd like to use. Will default to `URLSession.shared`.
@@ -103,13 +136,17 @@ public final class TUSClient {
     /// - Important: The client assumes by default that your server implements the Creation TUS protocol extension. If your server does not support that,
     ///   make sure that you provide an empty array in the `supportExtensions` parameter.
     /// - Throws: File related errors when it can't make a directory at the designated path.
-    public init(server: URL, sessionIdentifier: String, storageDirectory: URL? = nil, session: URLSession = URLSession.shared, chunkSize: Int = 500 * 1024, supportedExtensions: [TUSProtocolExtension] = [.creation]) throws {
+    @available(*, deprecated, message: "Use the init(server:sessionIdentifier:sessionConfiguration:storageDirectory:chunkSize:supportedExtension) initializer instead.")
+    public init(server: URL, sessionIdentifier: String, storageDirectory: URL? = nil,
+                session: URLSession = URLSession.shared, chunkSize: Int = 500 * 1024,
+                supportedExtensions: [TUSProtocolExtension] = [.creation]) throws {
         self.sessionIdentifier = sessionIdentifier
         self.api = TUSAPI(session: session)
         self.files = try Files(storageDirectory: storageDirectory)
         self.serverURL = server
         self.chunkSize = chunkSize
         self.supportedExtensions = supportedExtensions
+        self.scheduler = Scheduler()
         scheduler.delegate = self
         removeFinishedUploads()
     }
@@ -296,6 +333,20 @@ public final class TUSClient {
         } catch {
             throw TUSClientError.couldNotRetryUpload
         }
+    }
+    
+    // MARK: - Background uploads
+    
+    /// Call this method from your AppDelegate's application(_: handleEventsForBackgroundURLSession:completionHandler:) method so TUSClient can call the handler after processing all URLSession messages.
+    /// - Parameters:
+    ///   - handler: The closure you've received in your app delegate. Will be called by TUSClient when all URLSession related calls are received in the background.
+    ///   - sessionIdentifier: The session identifier provided by AppDelegate. TUSClient will use this identifier to make sure we don't call the handler for other URLSessions.
+    public func registerBackgroundHandler(_ handler: @escaping () -> Void, forSession sessionIdentifier: String) {
+        guard sessionIdentifier == api.session.configuration.identifier else {
+            return
+        }
+        
+        api.registerBackgroundHandler(handler)
     }
     
     /// When your app moves to the background, you can call this method to schedule background tasks to perform.
