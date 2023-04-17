@@ -58,27 +58,33 @@ final class TUSAPI: NSObject {
     func status(remoteDestination: URL, headers: [String: String]?, completion: @escaping (Result<Status, TUSAPIError>) -> Void) -> URLSessionDataTask {
         print("DW: requesting status for \(remoteDestination)")
         let request = makeRequest(url: remoteDestination, method: .head, headers: headers ?? [:])
-        let task = URLSession.shared.dataTask(request: request) { result in
-            print(result)
-            processResult(completion: completion) {
-                let (_, response) =  try result.get()
-                
-                guard (200...299).contains(response.statusCode) else {
-                    throw TUSAPIError.failedRequest(response)
+        let identifier = UUID().uuidString
+        
+        let task = session.dataTask(with: request)
+        task.taskDescription = identifier
+        
+        queue.sync {
+            callbacks[identifier] = { result in
+                print(result)
+                processResult(completion: completion) {
+                    let response =  try result.get()
+                    
+                    guard (200...299).contains(response.statusCode) else {
+                        throw TUSAPIError.failedRequest(response)
+                    }
+                    
+                    guard let lengthStr = response.allHeaderFields[caseInsensitive: "upload-Length"] as? String,
+                          let length = Int(lengthStr),
+                          let offsetStr = response.allHeaderFields[caseInsensitive: "upload-Offset"] as? String,
+                          let offset = Int(offsetStr) else {
+                        print("DW: ", response.allHeaderFields)
+                        throw TUSAPIError.couldNotFetchStatus
+                    }
+                    print("DW: length \(length), offset \(offset)")
+                    return Status(length: length, offset: offset)
                 }
-                
-                guard let lengthStr = response.allHeaderFields[caseInsensitive: "upload-Length"] as? String,
-                      let length = Int(lengthStr),
-                      let offsetStr = response.allHeaderFields[caseInsensitive: "upload-Offset"] as? String,
-                      let offset = Int(offsetStr) else {
-                    print("DW: ", response.allHeaderFields)
-                          throw TUSAPIError.couldNotFetchStatus
-                      }
-                print("DW: length \(length), offset \(offset)")
-                return Status(length: length, offset: offset)
             }
         }
-        
         task.resume()
         return task
     }
@@ -92,20 +98,26 @@ final class TUSAPI: NSObject {
     @discardableResult
     func create(metaData: UploadMetadata, completion: @escaping (Result<URL, TUSAPIError>) -> Void) -> URLSessionDataTask {
         let request = makeCreateRequest(metaData: metaData)
-        let task = URLSession.shared.dataTask(request: request) { (result: Result<(Data?, HTTPURLResponse), Error>) in
-            processResult(completion: completion) {
-                let (_, response) = try result.get()
-                
-                guard (200...299).contains(response.statusCode) else {
-                    throw TUSAPIError.failedRequest(response)
-                }
+        let identifier = UUID().uuidString
+        let task = session.dataTask(with: request)
+        task.taskDescription = identifier
+        
+        queue.sync {
+            callbacks[identifier] =  { result in
+                processResult(completion: completion) {
+                    let response = try result.get()
+                    
+                    guard (200...299).contains(response.statusCode) else {
+                        throw TUSAPIError.failedRequest(response)
+                    }
 
-                guard let location = response.allHeaderFields[caseInsensitive: "location"] as? String,
-                      let locationURL = URL(string: location, relativeTo: metaData.uploadURL) else {
-                    throw TUSAPIError.couldNotRetrieveLocation
-                }
+                    guard let location = response.allHeaderFields[caseInsensitive: "location"] as? String,
+                          let locationURL = URL(string: location, relativeTo: metaData.uploadURL) else {
+                        throw TUSAPIError.couldNotRetrieveLocation
+                    }
 
-                return locationURL
+                    return locationURL
+                }
             }
         }
         
@@ -190,23 +202,27 @@ final class TUSAPI: NSObject {
         let headersWithCustom = headers.merging(metaData.customHeaders ?? [:]) { _, new in new }
         
         let request = makeRequest(url: location, method: .patch, headers: headersWithCustom)
+        let task = session.uploadTask(with: request, from: data)
+        task.taskDescription = metaData.id.uuidString
         
-        let task = URLSession.shared.uploadTask(request: request, data: data) { result in
-            processResult(completion: completion) {
-                let (_, response) = try result.get()
-                
-                guard (200...299).contains(response.statusCode) else {
-                    throw TUSAPIError.failedRequest(response)
+        queue.sync {
+            callbacks[metaData.id.uuidString] = { result in
+                processResult(completion: completion) {
+                    let response = try result.get()
+                    
+                    guard (200...299).contains(response.statusCode) else {
+                        throw TUSAPIError.failedRequest(response)
+                    }
+                    
+                    guard let offsetStr = response.allHeaderFields[caseInsensitive: "upload-offset"] as? String,
+                          let offset = Int(offsetStr) else {
+                        throw TUSAPIError.couldNotRetrieveOffset
+                    }
+                    return offset
                 }
-                
-                guard let offsetStr = response.allHeaderFields[caseInsensitive: "upload-offset"] as? String,
-                      let offset = Int(offsetStr) else {
-                    throw TUSAPIError.couldNotRetrieveOffset
-                }
-                return offset
-                
             }
         }
+        
         task.resume()
         
         return task
@@ -230,8 +246,6 @@ final class TUSAPI: NSObject {
             "Content-Length": String(length)
         ]
         
-        print("DW: \(headers)")
-        
         /// Attach all headers from customHeader property
         let headersWithCustom = headers.merging(metaData.customHeaders ?? [:]) { _, new in new }
         
@@ -251,19 +265,6 @@ final class TUSAPI: NSObject {
             }
         }
         task.resume()
-//        let task = session.uploadTask(with: request, fromFile: file) { result in
-//            processResult(completion: completion) {
-//                let (_, response) = try result.get()
-//
-//                guard let offsetStr = response.allHeaderFields[caseInsensitive: "upload-offset"] as? String,
-//                      let offset = Int(offsetStr) else {
-//                    throw TUSAPIError.couldNotRetrieveOffset
-//                }
-//                return offset
-//
-//            }
-//        }
-        
         return task
     }
     
@@ -330,9 +331,13 @@ extension Dictionary {
     }
 }
 
-extension TUSAPI: URLSessionDelegate {
+extension TUSAPI: URLSessionDataDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
         print("DW: sent body data \(bytesSent). Total sent \(totalBytesSent)/\(totalBytesExpectedToSend). For task with id \(task.taskDescription).")
+    }
+    
+    func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
+        print("DW: as task is waiting for a connection")
     }
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -342,7 +347,10 @@ extension TUSAPI: URLSessionDelegate {
                 return
             }
             
-            defer { callbacks.removeValue(forKey: identifier) }
+            defer {
+                callbacks.removeValue(forKey: identifier)
+            }
+            
             guard let completion = callbacks[identifier] else {
                 return
             }
