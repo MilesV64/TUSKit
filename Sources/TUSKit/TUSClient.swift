@@ -209,6 +209,7 @@ public final class TUSClient {
             #elseif os(iOS)
             let destinationFilePath = try files.copy(from: filePath, id: id)
             #endif
+            NSLog("DW: Upload file at called")
             try scheduleTask(for: destinationFilePath, id: id, uploadURL: uploadURL, customHeaders: customHeaders, context: context)
             return id
         } catch let error as TUSClientError {
@@ -234,6 +235,7 @@ public final class TUSClient {
         do {
             let id = UUID()
             let filePath = try files.store(data: data, id: id, preferredFileExtension: preferredFileExtension)
+            NSLog("DW: Upload data called")
             try scheduleTask(for: filePath, id: id, uploadURL: uploadURL, customHeaders: customHeaders, context: context)
             return id
         } catch let error as TUSClientError {
@@ -326,6 +328,7 @@ public final class TUSClient {
             
             metaData.errorCount = 0
             
+            NSLog("DW: Scheduling a task for retry")
             try scheduleTask(for: metaData)
             return true
         } catch let error as TUSClientError {
@@ -434,6 +437,7 @@ public final class TUSClient {
             uploads[id] = metaData
         }
         
+        NSLog("DW: scheduleTask(for storedFilePath)")
         guard let task = try taskFor(metaData: metaData, api: api, files: files, chunkSize: chunkSize, progressDelegate: self) else {
             assertionFailure("Could not find a task for metaData \(metaData)")
             return
@@ -462,11 +466,24 @@ public final class TUSClient {
         do {
             let metaDataItems = try files.loadAllMetadata().filter({ metaData in
                 // Only allow uploads where errors are below an amount
-                metaData.errorCount <= retryCount && !metaData.isFinished
+                let acceptableErrorCount = metaData.errorCount <= retryCount
+                let unFinished = !metaData.isFinished
+                
+                return acceptableErrorCount && unFinished
             })
             
+            NSLog("DW: Scheduling stored tasks")
             for metaData in metaDataItems {
-                try scheduleTask(for: metaData)
+                try api.checkTaskExists(for: metaData) { taskExists in
+                    if !taskExists {
+                        NSLog("DW: will schedule task for \(metaData.id.uuidString)")
+                        do {
+                            try self.scheduleTask(for: metaData)
+                        } catch {
+                            //...
+                        }
+                    }
+                }
             }
             
             return metaDataItems
@@ -480,6 +497,7 @@ public final class TUSClient {
     /// Schedule a single task if needed. Will decide what task to schedule for the metaData.
     /// - Parameter metaData:The metaData the schedule.
     private func scheduleTask(for metaData: UploadMetadata) throws {
+        NSLog("DW: scheduleTask(for metaData: UploadMetadata)")
         guard let task = try taskFor(metaData: metaData, api: api, files: files, chunkSize: chunkSize, progressDelegate: self) else {
             throw TUSClientError.uploadIsAlreadyFinished
         }

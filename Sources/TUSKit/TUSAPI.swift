@@ -56,7 +56,7 @@ final class TUSAPI: NSObject {
     ///   - completion: A completion giving us the `Status` of an upload.
     @discardableResult
     func status(remoteDestination: URL, headers: [String: String]?, completion: @escaping (Result<Status, TUSAPIError>) -> Void) -> URLSessionDataTask {
-        print("DW: requesting status for \(remoteDestination)")
+        NSLog("DW: requesting status for \(remoteDestination)")
         let request = makeRequest(url: remoteDestination, method: .head, headers: headers ?? [:])
         let identifier = UUID().uuidString
         
@@ -77,10 +77,10 @@ final class TUSAPI: NSObject {
                           let length = Int(lengthStr),
                           let offsetStr = response.allHeaderFields[caseInsensitive: "upload-Offset"] as? String,
                           let offset = Int(offsetStr) else {
-                        print("DW: ", response.allHeaderFields)
+                        NSLog("DW: ", response.allHeaderFields)
                         throw TUSAPIError.couldNotFetchStatus
                     }
-                    print("DW: length \(length), offset \(offset)")
+                    NSLog("DW: length \(length), offset \(offset)")
                     return Status(length: length, offset: offset)
                 }
             }
@@ -269,7 +269,20 @@ final class TUSAPI: NSObject {
     }
     
     func registerBackgroundHandler(_ handler: @escaping () -> Void) {
+        NSLog("DW: Registered background handler")
         backgroundHandler = handler
+    }
+    
+    func checkTaskExists(for metadata: UploadMetadata, completion: @escaping (Bool) -> Void) {
+        session.getAllTasks(completionHandler: { tasks in
+            let hasTask = tasks.contains(where: { task in
+                task.taskDescription == metadata.id.uuidString
+            })
+            
+            NSLog("DW: completing task search for \(metadata.id.uuidString) with \(hasTask)")
+            
+            completion(hasTask)
+        })
     }
     
     /// A factory to make requests with sane defaults.
@@ -333,43 +346,50 @@ extension Dictionary {
 
 extension TUSAPI: URLSessionDataDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        print("DW: sent body data \(bytesSent). Total sent \(totalBytesSent)/\(totalBytesExpectedToSend). For task with id \(task.taskDescription).")
+        NSLog("DW: sent body data \(bytesSent). Total sent \(totalBytesSent)/\(totalBytesExpectedToSend). For task with id \(task.taskDescription).")
     }
     
     func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
-        print("DW: as task is waiting for a connection")
+        NSLog("DW: as task is waiting for a connection")
     }
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        print("DW: a task completed with \(error)")
+        NSLog("DW: a task completed with \(error)")
         queue.sync {
             guard let identifier = task.taskDescription else {
+                NSLog("DW: a task completed with no task description")
                 return
             }
             
             defer {
+                NSLog("DW: removing value for key \(identifier)")
                 callbacks.removeValue(forKey: identifier)
             }
             
             guard let completion = callbacks[identifier] else {
+                NSLog("DW: no callback for key \(identifier)")
                 return
             }
             
             if let error = error {
+                NSLog("DW: setting failure for task with \(identifier)")
                 completion(.failure(TUSAPIError.underlyingError(error)))
                 return
             }
             
             guard let response = task.response as? HTTPURLResponse else {
+                NSLog("DW: calling completion with failure for \(identifier). No HTTPURLResponse.")
                 completion(.failure(TUSAPIError.underlyingError(NetworkError.noHTTPURLResponse)))
                 return
             }
             
+            NSLog("DW: calling completion with success for \(identifier)")
             completion(.success(response))
         }
     }
     
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        NSLog("DW: Did finish events for background session")
         if let backgroundHandler {
             DispatchQueue.main.async {
                 backgroundHandler()

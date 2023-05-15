@@ -230,7 +230,7 @@ final class UploadDataTask: NSObject, IdentifiableTask {
     }
     
     func cancel() {
-        print("DW: cancelling task \(sessionTask?.taskDescription ?? "NO TASK!!")")
+        NSLog("DW: cancelling task \(sessionTask?.taskDescription ?? "NO TASK!!")")
         isCanceled = true
         observation?.invalidate()
         sessionTask?.cancel()

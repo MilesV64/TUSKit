@@ -21,11 +21,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         
         do {
-            tusClient = try TUSClient(server: URL(string: "https://tusd.tusdemo.net/files")!, sessionIdentifier: "TUS DEMO",
-                                      sessionConfiguration: .background(withIdentifier: "com.TUSKit.sample"),
-                                      storageDirectory: URL(string: "/TUS")!, chunkSize: 100000 * 1024 * 1024)
+            tusClient = try TUSClient(
+                server: URL(string: "https://tusd.tusdemo.net/files")!,
+                sessionIdentifier: "TUS DEMO",
+                sessionConfiguration: .background(withIdentifier: "com.TUSKit.sample"),
+                storageDirectory: URL(string: "/TUS")!,
+                chunkSize: Int.max
+            )
 
             wrapper = TUSWrapper(client: tusClient)
+            NSLog("DW: scene will connect")
             let remainingUploads = tusClient.start()
             switch remainingUploads.count {
             case 0:
@@ -41,7 +46,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             let ids = try tusClient.failedUploadIDs()
             for id in ids {
                 // You can either retry a failed upload...
-                try tusClient.retry(id: id)
+                NSLog("DW: will retry upload with id \(id)")
+                if try tusClient.retry(id: id) == false {
+                    NSLog("DW: could not retry upload with id \(id)")
+                    try tusClient.removeCacheFor(id: id)
+                }
                 // ...alternatively, you can delete them too
                 // tusClient.removeCacheFor(id: id)
             }
