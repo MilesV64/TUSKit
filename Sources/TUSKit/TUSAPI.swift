@@ -82,7 +82,9 @@ final class TUSAPI {
         let request = makeCreateRequest(metaData: metaData)
         let task = session.dataTask(request: request) { (result: Result<(Data?, HTTPURLResponse), Error>) in
             processResult(completion: completion) {
-                let (_, response) = try result.get()
+                let (data, response) = try result.get()
+                
+                print(String(decoding: data!, as: UTF8.self))
                 
                 guard (200...299).contains(response.statusCode) else {
                     throw TUSAPIError.failedRequest(response)

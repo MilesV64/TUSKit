@@ -67,6 +67,7 @@ final class CreationTask: IdentifiableTask {
             } catch let error as TUSClientError {
                 completed(.failure(error))
             } catch {
+                print(error)
                 completed(.failure(TUSClientError.couldNotCreateFileOnServer))
             }
             
