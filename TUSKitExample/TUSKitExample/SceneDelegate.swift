@@ -26,7 +26,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 sessionIdentifier: "TUS DEMO",
                 sessionConfiguration: .background(withIdentifier: "com.TUSKit.sample"),
                 storageDirectory: URL(string: "/TUS")!,
-                chunkSize: Int.max
+                chunkSize: 0
             )
 
             wrapper = TUSWrapper(client: tusClient)

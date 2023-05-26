@@ -268,6 +268,21 @@ final class TUSAPI: NSObject {
         return task
     }
     
+    func registerCallback(_ completion: @escaping (Result<Int, TUSAPIError>) -> Void, forMetadata metadata: UploadMetadata) {
+        queue.sync {
+            self.callbacks[metadata.id.uuidString] = { result in
+                processResult(completion: completion) {
+                    let response = try result.get()
+                    guard let offsetStr = response.allHeaderFields[caseInsensitive: "upload-offset"] as? String,
+                          let offset = Int(offsetStr) else {
+                        throw TUSAPIError.couldNotRetrieveOffset
+                    }
+                    return offset
+                }
+            }
+        }
+    }
+    
     func registerBackgroundHandler(_ handler: @escaping () -> Void) {
         NSLog("DW: Registered background handler")
         backgroundHandler = handler
@@ -276,7 +291,7 @@ final class TUSAPI: NSObject {
     func checkTaskExists(for metadata: UploadMetadata, completion: @escaping (Bool) -> Void) {
         session.getAllTasks(completionHandler: { tasks in
             let hasTask = tasks.contains(where: { task in
-                task.taskDescription == metadata.id.uuidString
+                return task.taskDescription == metadata.id.uuidString
             })
             
             NSLog("DW: completing task search for \(metadata.id.uuidString) with \(hasTask)")

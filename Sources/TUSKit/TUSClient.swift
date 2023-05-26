@@ -71,7 +71,7 @@ public final class TUSClient {
     private let serverURL: URL
     private let scheduler: Scheduler
     private let api: TUSAPI
-    private let chunkSize: Int
+    private let chunkSize: Int?
     /// Keep track of uploads and their id's
     private var uploads = [UUID: UploadMetadata]()
     
@@ -83,7 +83,7 @@ public final class TUSClient {
     /// the computed property backed by storage var.
     private var backgroundClient: TUSBackground? {
         if _backgroundClient == nil {
-            _backgroundClient = TUSBackground(api: api, files: files, chunkSize: chunkSize)
+            _backgroundClient = TUSBackground(api: api, files: files, chunkSize: chunkSize ?? 0)
         }
         
         return _backgroundClient as? TUSBackground
@@ -116,11 +116,16 @@ public final class TUSClient {
         self.api = TUSAPI(sessionConfiguration: sessionConfiguration)
         self.files = try Files(storageDirectory: storageDirectory)
         self.serverURL = server
-        self.chunkSize = chunkSize
+        if chunkSize > 0 {
+            self.chunkSize = chunkSize
+        } else {
+            self.chunkSize = nil
+        }
         self.supportedExtensions = supportedExtensions
         self.scheduler = scheduler
         scheduler.delegate = self
         removeFinishedUploads()
+        reregisterCallbacks()
     }
     
     /// Initialize a TUSClient
@@ -144,11 +149,16 @@ public final class TUSClient {
         self.api = TUSAPI(session: session)
         self.files = try Files(storageDirectory: storageDirectory)
         self.serverURL = server
-        self.chunkSize = chunkSize
+        if chunkSize > 0 {
+            self.chunkSize = chunkSize
+        } else {
+            self.chunkSize = nil
+        }
         self.supportedExtensions = supportedExtensions
         self.scheduler = Scheduler()
         scheduler.delegate = self
         removeFinishedUploads()
+        reregisterCallbacks()
     }
     
     // MARK: - Starting and stopping
@@ -402,6 +412,34 @@ public final class TUSClient {
         }
     }
     
+    /// reregisters callbacks on the TUSApi so they can be called when the app is notified of uploads that completed while the app wasn't in memory
+    private func reregisterCallbacks() {
+        guard let allMetadata = try? files.loadAllMetadata() else {
+            return
+        }
+        
+        for metadata in allMetadata {
+            NSLog("DW: attempt to reconstruct task for \(metadata.id.uuidString)")
+            api.checkTaskExists(for: metadata) { [weak self] taskExists in
+                guard let self else {
+                    return
+                }
+                guard taskExists,
+                      let task = try? UploadDataTask(api: api, metaData: metadata, files: files) else {
+                    NSLog("DW: could not reconstruct task for \(metadata.id.uuidString)")
+                    return
+                }
+                
+                api.registerCallback({ result in
+                    NSLog("DW: called reregistered callback for \(metadata.id.uuidString)")
+                    task.taskCompleted(result: result, completed: { _ in })
+                }, forMetadata: metadata)
+                
+                NSLog("DW: registered callback for \(metadata.id.uuidString)")
+            }
+        }
+    }
+    
     /// Upload a file at the URL. Will not copy the path.
     /// - Parameter storedFilePath: The path where the file is stored for processing.
     private func scheduleTask(for storedFilePath: URL, id: UUID, uploadURL: URL?, customHeaders: [String: String], context: [String: String]?) throws {
@@ -616,7 +654,7 @@ private extension String {
 /// Decide which task to create based on metaData.
 /// - Parameter metaData: The `UploadMetadata` for which to create a `Task`.
 /// - Returns: The task that has to be performed for the relevant metaData. Will return nil if metaData's file is already uploaded / finished. (no task needed).
-func taskFor(metaData: UploadMetadata, api: TUSAPI, files: Files, chunkSize: Int, progressDelegate: ProgressDelegate? = nil) throws -> ScheduledTask? {
+func taskFor(metaData: UploadMetadata, api: TUSAPI, files: Files, chunkSize: Int?, progressDelegate: ProgressDelegate? = nil) throws -> ScheduledTask? {
     guard !metaData.isFinished else {
         return nil
     }
